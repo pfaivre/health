@@ -1,0 +1,355 @@
+#!/bin/bash
+
+# Health
+# by Pierre Faivre
+
+# ----------------------
+# Global parameters
+# ----------------------
+
+USE_COLORS=true
+
+
+# ----------------------
+# Gathering information
+# ----------------------
+
+# Batteries
+BATPATH=/sys/class/power_supply/
+batteries="$(ls -1 $BATPATH | grep "BAT")"
+if [[ $batteries && ${batteries-x} ]]; then
+    batteries_count=$(echo $batteries | wc -l)
+else
+    batteries_count=0
+fi
+
+# Memory
+ram_memtotal=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+ram_memfree=$(grep MemFree /proc/meminfo | awk '{print $2}')
+ram_memavailable=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+ram_memused=$(( ram_memtotal - ram_memfree ))
+ram_memactivelyused=$(( ram_memtotal - ram_memavailable ))
+ram_memcached=$(( $(grep "^Cached*" /proc/meminfo | awk '{print $2}') + $(grep Buffers /proc/meminfo | awk '{print $2}') ))
+ram_usedlevel=$(( (100 * $ram_memactivelyused + ($ram_memtotal/2)) / $ram_memtotal ))
+swap_total=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+swap_free=$(grep SwapFree /proc/meminfo | awk '{print $2}')
+swap_used=$(( swap_total - swap_free ))
+swap_usedlevel=$(( (100 * $swap_used + ($swap_total/2)) / $swap_total ))
+
+# Load average
+loadavg=`cat /proc/loadavg`
+loadavg_1m=`echo $loadavg | awk '{print $1}'`
+loadavg_5m=`echo $loadavg | awk '{print $2}'`
+loadavg_15m=`echo $loadavg | awk '{print $3}'`
+
+# Temperature
+temp_core0=$(sensors 2> /dev/null | grep "Core 0" | awk '/Core\ 0/ {gsub(/\+/,"",$3); gsub(/\..+/,"",$3)    ; print $3}')
+
+# System
+sys_os=$(uname -o)
+sys_hardware=$(uname -m)
+sys_kernel_release=$(uname -r)
+sys_uptime=$(uptime | awk '{print $3}' | cut -d "," -f 1)
+
+# CPU
+cpu_number_cores_logical=$(cat /proc/cpuinfo | grep 'processor' | wc -l)
+cpu_number_cores_physical=$(cat /proc/cpuinfo | grep 'core id' | sort --unique | wc -l)
+cpu_model_name=$(grep "model name" /proc/cpuinfo | head -n 1 | cut -d ":" -f 2)
+
+# Drives
+drives=$(df -T | grep -v tmpfs | sed 1d)
+
+
+# -----------------------
+# Functions and variables
+# -----------------------
+
+if [ $USE_COLORS = true ]; then
+  reset="\x1b[0m"
+  red="\033[00;31m"
+  blue="\033[00;34m"
+  green="\033[00;32m"
+  yellow="\033[00;33m"
+  grey1="\033[00;01;30m"
+  grey2="\x1b[38;5;248m"
+fi
+
+issues_count=0
+
+# Displays a number of kilobytes in a human readable format
+# $1 kilobytes
+disp() {
+  s=$1
+  i=1
+  while [[ ${#s} -ge 6 ]]; do
+    s=$(bc <<< "scale=2;$s/1024")
+    ((i+=1))
+  done
+
+  case $i in
+    1) s+="K" ;;
+    2) s+="M" ;;
+    3) s+="G" ;;
+    4) s+="T" ;;
+  esac
+
+  printf "%7s" $s
+}
+
+# Displays a padded string, if it is larger than the requested size, it will be truncated
+# $1 size
+# $2 string
+trunc() {
+    if [ ${#2} -lt $1 ];then
+        printf "%-$1s" "$2" # Displays the string and fill the rest
+    else
+        printf "%.$(($1-1))s…" "$2" # Truncate the string and put suspention marks
+    fi
+}
+
+# Displays a line
+# $1 length of the line
+# $2 (optional) color of the line
+# $3 (optional) text to put in the middle
+print_line() {
+    buf="$2"
+
+    if [[ $3 && ${3-x} ]]; then
+        word=${#3}
+        left=$(( ($1 - word) / 2 - 1 ))
+        right=$(( $1 - $left - $word - 2 ))
+        i=0
+        while [ $i -lt $left ]; do
+            buf+="─"
+            ((i++))
+        done
+        buf+="$reset $3 $2"
+        i=0
+        while [ $i -lt $right ]; do
+            buf+="─"
+            ((i++))
+        done
+    else
+        i=0
+        while [ $i -lt $1 ]; do
+            buf+="─"
+            ((i++))
+        done
+    fi
+
+    printf "$buf"
+}
+
+# Displays a bar graph like this "[────  ]"
+# $1 total amount
+# $2 effective amount
+# $3 (optional) secondary effective amount
+bar_graph() {
+    SIZE=6
+
+    nb_highlighted=$(( ($2 * $SIZE + ($1/2)) / $1 )) # ($total/2) is here to round the division
+    count=0
+
+    ret="[$grey2"
+
+    # Primary amount
+    for (( i=1; i<=$nb_highlighted; i++ )); do
+        ret+="━"
+        ((count++))
+    done
+
+    # Secondary amount, if set
+    if [[ $3 && ${3-x} ]]; then
+        ret+="$grey1"
+        nb_highlighted=$(( ($3 * $SIZE + ($1/2)) / $1 ))
+        for (( i=1; i<=$nb_highlighted && $count<$SIZE; i++ )); do
+            if [ $USE_COLORS = true ]; then
+                ret+="━"
+            else
+                ret+="─"
+            fi
+            ((count++))
+        done
+    fi
+
+    # fill the rest
+    while [ $count -lt $SIZE ]; do
+        ret+=" "
+        ((count++))
+    done
+
+    printf "$ret$reset]"
+}
+
+COLUMNS=$(tput cols)
+
+
+# -----------------------
+# Displaying System
+# -----------------------
+
+printf " "
+print_line $((COLUMNS-2)) $red "System"
+printf "$reset\n"
+
+# OS
+trunc $COLUMNS " $sys_os $sys_kernel_release $sys_hardware"
+printf "\n"
+
+# Uptime
+printf " Up: $sys_uptime\n"
+
+# Temperature
+if [[ $temp_core0 && ${temp_core0-x} ]]; then
+    if (( `echo "$temp_core0 > 70" | bc -l` ));then
+        printf "$red●$(echo $reset)Temperature: $red$temp_core0°C$reset\n"
+        ((issues_count++))
+    else
+        printf " Temperature: $temp_core0°C\n"
+    fi
+fi
+
+printf "\n"
+
+
+# -----------------------
+# Displaying CPU
+# -----------------------
+
+printf " "
+print_line $((COLUMNS-2)) $blue "CPU"
+printf "$reset\n"
+
+# Model name
+trunc $COLUMNS "$cpu_model_name"
+printf "\n"
+
+# Load average
+if (( `echo "$loadavg_1m < $cpu_number_cores_physical" | bc -l` ));then
+    printf " Load: $loadavg_1m $grey2$loadavg_5m $grey1$loadavg_15m$reset\n"
+else
+    printf "$red●$(echo $reset)Load: $red$loadavg_1m $grey2$loadavg_5m $grey1$loadavg_15m$reset\n"
+    ((issues_count++))
+fi
+
+# Cores
+printf " Cores: $cpu_number_cores_physical$grey2 physical$reset, $cpu_number_cores_logical$grey2 logical$reset\n"
+
+printf "\n"
+
+
+# -----------------------
+# Displaying Memory
+# -----------------------
+
+printf " "
+print_line $((COLUMNS-2)) $green "Memory"
+printf "$reset\n"
+
+# RAM
+if (( `echo "$ram_usedlevel < 90" | bc -l` )); then
+    printf " RAM  $(bar_graph $ram_memtotal $ram_memactivelyused $ram_memcached) $grey2$(disp $ram_memactivelyused)/$(disp $ram_memtotal)$reset\n"
+else
+    printf "$red●$(echo $reset)RAM  $(bar_graph $ram_memtotal $ram_memactivelyused $ram_memcached) $red$(disp $ram_memactivelyused)$grey2/$(disp $ram_memtotal)$reset\n"
+    ((issues_count++))
+fi
+
+# Swap
+if (( `echo "$swap_usedlevel < 90" | bc -l` )); then
+    printf " SWAP $(bar_graph $swap_total $swap_used) $grey2$(disp $swap_used)/$(disp $swap_total)$reset\n"
+else
+    printf "$red●$(echo $reset)SWAP $(bar_graph $swap_total $swap_used) $red$(disp $swap_used)$grey2/$(disp $swap_total)$reset\n"
+    ((issues_count++))
+fi
+
+
+printf "\n"
+
+
+# -----------------------
+# Displaying Batteries
+# -----------------------
+
+if [ $batteries_count -ge 1 ]; then
+    printf " "
+    print_line $((COLUMNS-2)) $yellow "Batteries"
+    printf "$reset\n"
+
+    while read -r battery_path; do
+        battery_path=$BATPATH$battery_path
+
+        if [[ -f $battery_path/charge_full_design ]]; then
+            battery_charge_full_design=$(cat $battery_path/charge_full_design)
+        else
+            battery_charge_full_design=$(cat $battery_path/energy_full_design)
+        fi
+        if [[ -f $battery_path/charge_full ]]; then
+            battery_charge_full=$(cat $battery_path/charge_full)
+        else
+            battery_charge_full=$(cat $battery_path/energy_full)
+        fi
+        if [[ -f $battery_path/charge_now ]]; then
+            battery_charge_now=$(cat $battery_path/charge_now)
+        else
+            battery_charge_now=$(cat $battery_path/energy_now)
+        fi
+        battery_charge_level=$(( (100 * $battery_charge_now + ($battery_charge_full/2)) / $battery_charge_full ))
+        battery_capacity=$(echo "$battery_charge_full*100/$battery_charge_full_design" | bc -l | cut -c 1-4)
+        battery_status=$(cat $battery_path/status)
+        battery_name=${battery_path##*/}
+
+        # Charge
+        if (( `echo "$battery_charge_level > 15" | bc -l` )); then
+            printf " $battery_name $(bar_graph $battery_charge_full $battery_charge_now) $battery_charge_level%%"
+        else
+            printf "$red●$(echo $reset)$battery_name $(bar_graph $battery_charge_full $battery_charge_now) $red$battery_charge_level%%$reset"
+            ((issues_count++))
+        fi
+
+        # Status
+        printf " $grey2($battery_status)$reset\n"
+
+        # Capacity
+        if (( `echo "$battery_capacity > 60" | bc -l` ));then
+            printf " Capacity: $battery_capacity%%\n"
+        else
+            printf "$red●$(echo $reset)Capacity: $red$battery_capacity%%$reset\n"
+            ((issues_count++))
+        fi
+    done <<< "$batteries"
+
+    printf "\n"
+fi
+
+
+# -----------------------
+# Displaying Volumes
+# -----------------------
+
+printf " "
+print_line $((COLUMNS-2)) $grey2 "Volumes"
+printf "$reset\n"
+
+while read -r line; do
+    device=$(echo $line | awk '{print $1}' | cut -d '/' -f 3)
+    total=$(echo $line | awk '{print $3}')
+    used=$(echo $line | awk '{print $4}')
+    level=$(( (100 * $used + ($total/2)) / $total ))
+
+    if (( `echo "$level < 90" | bc -l` ));then
+        printf " %-4s $(bar_graph $total $used) $grey2$(disp $used)/$(disp $total)$reset\n" $device
+    else
+        printf "$red●$(echo $reset)%-4s $(bar_graph $total $used) $red$(disp $used)$grey2/$(disp $total)$reset\n" $device
+        ((issues_count++))
+    fi
+done <<< "$drives"
+
+printf "\n"
+
+if [ $issues_count -eq 0 ]; then
+    printf "Issues: $green$issues_count$reset\n"
+else
+    printf "Issues: $red$issues_count$reset\n"
+fi
+
+exit 0
