@@ -9,6 +9,8 @@
 
 USE_COLORS=true
 
+USE_UTF8=true
+
 
 # ----------------------
 # Gathering information
@@ -65,13 +67,23 @@ drives=$(df -T | grep -v tmpfs | sed 1d)
 # -----------------------
 
 if [ $USE_COLORS = true ]; then
-  reset="\x1b[0m"
-  red="\033[00;31m"
-  blue="\033[00;34m"
-  green="\033[00;32m"
-  yellow="\033[00;33m"
-  grey1="\033[00;01;30m"
-  grey2="\x1b[38;5;248m"
+    reset="\x1b[0m"
+    red="\033[00;31m"
+    blue="\033[00;34m"
+    green="\033[00;32m"
+    yellow="\033[00;33m"
+    grey1="\033[00;01;30m"
+    grey2="\x1b[38;5;248m"
+fi
+
+if [ $USE_UTF8 = true ]; then
+    dash_thick="━"
+    dash_light="─"
+    dot="●"
+else
+    dash_thick="="
+    dash_light="~"
+    dot="*"
 fi
 
 issues_count=0
@@ -79,21 +91,22 @@ issues_count=0
 # Displays a number of kilobytes in a human readable format
 # $1 kilobytes
 disp() {
-  s=$1
-  i=1
-  while [[ ${#s} -ge 6 ]]; do
-    s=$(bc <<< "scale=2;$s/1024")
-    ((i+=1))
-  done
+    s=$1
+    i=1
+    while [ $(echo "$s >= 1024" | bc -l) = "1" ]; do
+        s=$(bc <<< "scale=2;$s/1024")
+        ((i+=1))
+    done
 
-  case $i in
-    1) s+="K" ;;
-    2) s+="M" ;;
-    3) s+="G" ;;
-    4) s+="T" ;;
-  esac
+    case $i in
+        1) s+="K" ;;
+        2) s+="M" ;;
+        3) s+="G" ;;
+        4) s+="T" ;;
+        5) s+="P" ;;
+    esac
 
-  printf "%7s" $s
+    printf "%7s" $s
 }
 
 # Displays a padded string, if it is larger than the requested size, it will be truncated
@@ -109,30 +122,30 @@ trunc() {
 
 # Displays a line
 # $1 length of the line
-# $2 (optional) color of the line
-# $3 (optional) text to put in the middle
+# $2 (optional) text to put in the middle
+# $3 (optional) color of the line
 print_line() {
-    buf="$2"
+    buf="$3"
 
-    if [[ $3 && ${3-x} ]]; then
-        word=${#3}
+    if [[ $2 && ${2-x} ]]; then
+        word=${#2}
         left=$(( ($1 - word) / 2 - 1 ))
         right=$(( $1 - $left - $word - 2 ))
         i=0
         while [ $i -lt $left ]; do
-            buf+="─"
+            buf+="$dash_light"
             ((i++))
         done
-        buf+="$reset $3 $2"
+        buf+="$reset $2 $3"
         i=0
         while [ $i -lt $right ]; do
-            buf+="─"
+            buf+="$dash_light"
             ((i++))
         done
     else
         i=0
         while [ $i -lt $1 ]; do
-            buf+="─"
+            buf+="$dash_light"
             ((i++))
         done
     fi
@@ -154,7 +167,7 @@ bar_graph() {
 
     # Primary amount
     for (( i=1; i<=$nb_highlighted; i++ )); do
-        ret+="━"
+        ret+="$dash_thick"
         ((count++))
     done
 
@@ -163,11 +176,7 @@ bar_graph() {
         ret+="$grey1"
         nb_highlighted=$(( ($3 * $SIZE + ($1/2)) / $1 ))
         for (( i=1; i<=$nb_highlighted && $count<$SIZE; i++ )); do
-            if [ $USE_COLORS = true ]; then
-                ret+="━"
-            else
-                ret+="─"
-            fi
+            ret+="$dash_light"
             ((count++))
         done
     fi
@@ -189,7 +198,7 @@ COLUMNS=$(tput cols)
 # -----------------------
 
 printf " "
-print_line $((COLUMNS-2)) $red "System"
+print_line $((COLUMNS-2)) "System" $red
 printf "$reset\n"
 
 # OS
@@ -202,7 +211,7 @@ printf " Up: $sys_uptime\n"
 # Temperature
 if [[ $temp_core0 && ${temp_core0-x} ]]; then
     if (( `echo "$temp_core0 > 70" | bc -l` ));then
-        printf "$red●$(echo $reset)Temperature: $red$temp_core0°C$reset\n"
+        printf "$red$dot$(echo $reset)Temperature: $red$temp_core0°C$reset\n"
         ((issues_count++))
     else
         printf " Temperature: $temp_core0°C\n"
@@ -217,18 +226,18 @@ printf "\n"
 # -----------------------
 
 printf " "
-print_line $((COLUMNS-2)) $blue "CPU"
+print_line $((COLUMNS-2)) "CPU" $blue
 printf "$reset\n"
 
 # Model name
-trunc $COLUMNS "$cpu_model_name"
+trunc $COLUMNS " $(echo $cpu_model_name | sed -e 's/^[[:space:]]*//')"
 printf "\n"
 
 # Load average
 if (( `echo "$loadavg_1m < $cpu_number_cores_physical" | bc -l` ));then
     printf " Load: $loadavg_1m $grey2$loadavg_5m $grey1$loadavg_15m$reset\n"
 else
-    printf "$red●$(echo $reset)Load: $red$loadavg_1m $grey2$loadavg_5m $grey1$loadavg_15m$reset\n"
+    printf "$red$dot$(echo $reset)Load: $red$loadavg_1m $grey2$loadavg_5m $grey1$loadavg_15m$reset\n"
     ((issues_count++))
 fi
 
@@ -243,14 +252,14 @@ printf "\n"
 # -----------------------
 
 printf " "
-print_line $((COLUMNS-2)) $green "Memory"
+print_line $((COLUMNS-2)) "Memory" $green
 printf "$reset\n"
 
 # RAM
 if (( `echo "$ram_usedlevel < 90" | bc -l` )); then
     printf " RAM  $(bar_graph $ram_memtotal $ram_memactivelyused $ram_memcached) $grey2$(disp $ram_memactivelyused)/$(disp $ram_memtotal)$reset\n"
 else
-    printf "$red●$(echo $reset)RAM  $(bar_graph $ram_memtotal $ram_memactivelyused $ram_memcached) $red$(disp $ram_memactivelyused)$grey2/$(disp $ram_memtotal)$reset\n"
+    printf "$red$dot$(echo $reset)RAM  $(bar_graph $ram_memtotal $ram_memactivelyused $ram_memcached) $red$(disp $ram_memactivelyused)$grey2/$(disp $ram_memtotal)$reset\n"
     ((issues_count++))
 fi
 
@@ -258,7 +267,7 @@ fi
 if (( `echo "$swap_usedlevel < 90" | bc -l` )); then
     printf " SWAP $(bar_graph $swap_total $swap_used) $grey2$(disp $swap_used)/$(disp $swap_total)$reset\n"
 else
-    printf "$red●$(echo $reset)SWAP $(bar_graph $swap_total $swap_used) $red$(disp $swap_used)$grey2/$(disp $swap_total)$reset\n"
+    printf "$red$dot$(echo $reset)SWAP $(bar_graph $swap_total $swap_used) $red$(disp $swap_used)$grey2/$(disp $swap_total)$reset\n"
     ((issues_count++))
 fi
 
@@ -272,7 +281,7 @@ printf "\n"
 
 if [ $batteries_count -ge 1 ]; then
     printf " "
-    print_line $((COLUMNS-2)) $yellow "Batteries"
+    print_line $((COLUMNS-2)) "Batteries" $yellow
     printf "$reset\n"
 
     while read -r battery_path; do
@@ -302,7 +311,7 @@ if [ $batteries_count -ge 1 ]; then
         if (( `echo "$battery_charge_level > 15" | bc -l` )); then
             printf " $battery_name $(bar_graph $battery_charge_full $battery_charge_now) $battery_charge_level%%"
         else
-            printf "$red●$(echo $reset)$battery_name $(bar_graph $battery_charge_full $battery_charge_now) $red$battery_charge_level%%$reset"
+            printf "$red$dot$(echo $reset)$battery_name $(bar_graph $battery_charge_full $battery_charge_now) $red$battery_charge_level%%$reset"
             ((issues_count++))
         fi
 
@@ -313,7 +322,7 @@ if [ $batteries_count -ge 1 ]; then
         if (( `echo "$battery_capacity > 60" | bc -l` ));then
             printf " Capacity: $battery_capacity%%\n"
         else
-            printf "$red●$(echo $reset)Capacity: $red$battery_capacity%%$reset\n"
+            printf "$red$dot$(echo $reset)Capacity: $red$battery_capacity%%$reset\n"
             ((issues_count++))
         fi
     done <<< "$batteries"
@@ -327,7 +336,7 @@ fi
 # -----------------------
 
 printf " "
-print_line $((COLUMNS-2)) $grey2 "Volumes"
+print_line $((COLUMNS-2)) "Volumes" $grey2
 printf "$reset\n"
 
 while read -r line; do
@@ -339,7 +348,7 @@ while read -r line; do
     if (( `echo "$level < 90" | bc -l` ));then
         printf " %-4s $(bar_graph $total $used) $grey2$(disp $used)/$(disp $total)$reset\n" $device
     else
-        printf "$red●$(echo $reset)%-4s $(bar_graph $total $used) $red$(disp $used)$grey2/$(disp $total)$reset\n" $device
+        printf "$red$dot$(echo $reset)%-4s $(bar_graph $total $used) $red$(disp $used)$grey2/$(disp $total)$reset\n" $device
         ((issues_count++))
     fi
 done <<< "$drives"
