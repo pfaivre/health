@@ -339,11 +339,20 @@ printf " "
 print_line $((COLUMNS-2)) "Volumes" $grey2
 printf "$reset\n"
 
+declare -A shown_volumes
+
 while read -r line; do
     device=$(echo $line | awk '{print $1}' | cut -d '/' -f 3)
+
+    if [[ ${shown_volumes[$device]} ]]; then
+        continue
+    fi
+    shown_volumes[$device]=1
+
     total=$(echo $line | awk '{print $3}')
-    used=$(echo $line | awk '{print $4}')
-    level=$(( (100 * $used + ($total/2)) / $total ))
+    available=$(echo $line | awk '{print $5}')
+    used=$(( $total - $available ))
+    level=$(bc -l <<< "scale=2; 100 * $used / $total")
 
     if (( `echo "$level < 90" | bc -l` ));then
         printf " %-4s $(bar_graph $total $used) $grey2$(disp $used)/$(disp $total)$reset\n" $device
