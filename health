@@ -45,7 +45,7 @@ loadavg_5m=`echo $loadavg | awk '{print $2}'`
 loadavg_15m=`echo $loadavg | awk '{print $3}'`
 
 # Temperature
-temp_core0=$(sensors 2> /dev/null | grep "Core 0" | awk '/Core\ 0/ {gsub(/\+/,"",$3); gsub(/\..+/,"",$3)    ; print $3}')
+temp_highest=$(sensors | grep 'temp[0-9]\|Core [0-9]' | cut -d '(' -f1 | cut -d '+' -f2 | cut -d '.' -f1 | sort -n | tail -n 1)
 
 # System
 sys_os=$(uname -o)
@@ -209,12 +209,12 @@ printf "\n"
 printf " Up: $sys_uptime\n"
 
 # Temperature
-if [[ $temp_core0 && ${temp_core0-x} ]]; then
-    if (( `echo "$temp_core0 > 70" | bc -l` ));then
-        printf "$red$dot$(echo $reset)Temperature: $red$temp_core0°C$reset\n"
+if [[ $temp_highest && ${temp_highest-x} ]]; then
+    if (( `echo "$temp_highest > 70" | bc -l` ));then
+        printf "$red$dot$(echo $reset)Temperature: $red$temp_highest°C$reset\n"
         ((issues_count++))
     else
-        printf " Temperature: $temp_core0°C\n"
+        printf " Temperature: $temp_highest°C\n"
     fi
 fi
 
