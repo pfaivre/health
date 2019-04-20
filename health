@@ -59,7 +59,7 @@ cpu_number_cores_physical=$(cat /proc/cpuinfo | grep 'core id' | sort --unique |
 cpu_model_name=$(grep "model name" /proc/cpuinfo | head -n 1 | cut -d ":" -f 2)
 
 # Drives
-drives=$(df -T | grep -v tmpfs | sed 1d)
+drives=$(df -T | grep -v -E "(tmpfs|squashfs)" | sed 1d)
 
 
 # -----------------------
