@@ -59,7 +59,7 @@ cpu_number_cores_physical=$(cat /proc/cpuinfo | grep 'core id' | sort --unique |
 cpu_model_name=$(grep "model name" /proc/cpuinfo | head -n 1 | cut -d ":" -f 2)
 
 # Drives
-drives=$(df -T | grep -v -E "(tmpfs|squashfs)" | sed 1d)
+drives=$(df -T 2> /dev/null | grep -v -E "(tmpfs|squashfs|efi)" | sed 1d)
 
 
 # -----------------------
@@ -106,7 +106,7 @@ disp() {
         5) s+="P" ;;
     esac
 
-    printf "%7s" $s
+    printf "%8s" $s
 }
 
 # Displays a padded string, if it is larger than the requested size, it will be truncated
@@ -340,9 +340,18 @@ print_line $((COLUMNS-2)) "Volumes" $grey2
 printf "$reset\n"
 
 declare -A shown_volumes
+longest_device_name=0
+
+# First loop to get the longest device name
+while read -r line; do
+    device=$(echo $line | awk '{print $7}')
+    if [ $longest_device_name -lt ${#device} ]; then
+        longest_device_name=${#device}
+    fi
+done <<< "$drives"
 
 while read -r line; do
-    device=$(echo $line | awk '{print $1}' | cut -d '/' -f 3)
+    device=$(echo $line | awk '{print $7}')
 
     if [[ ${shown_volumes[$device]} ]]; then
         continue
@@ -355,9 +364,9 @@ while read -r line; do
     level=$(bc -l <<< "scale=2; 100 * $used / $total")
 
     if (( `echo "$level < 90" | bc -l` ));then
-        printf " %-4s $(bar_graph $total $used) $grey2$(disp $used)/$(disp $total)$reset\n" $device
+        printf " %-$(echo $longest_device_name)s $(bar_graph $total $used) $grey2$(disp $used)/$(disp $total)$reset\n" $device
     else
-        printf "$red$dot$(echo $reset)%-4s $(bar_graph $total $used) $red$(disp $used)$grey2/$(disp $total)$reset\n" $device
+        printf "$red$dot$(echo $reset)%-$(echo $longest_device_name)s $(bar_graph $total $used) $red$(disp $used)$grey2/$(disp $total)$reset\n" $device
         ((issues_count++))
     fi
 done <<< "$drives"
